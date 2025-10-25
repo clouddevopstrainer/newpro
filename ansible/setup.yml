@@ -67,3 +67,70 @@
 
     - debug:
         msg: "✅ Docker installed successfully: {{ docker_version.stdout }}"
+
+    # ---------------------------------------------------------------------
+    # 🧩 Monitoring Section (auto-fix Prometheus port conflict)
+    # ---------------------------------------------------------------------
+
+    - name: Check if port 9090 is in use
+      shell: "sudo lsof -t -i:9090 || true"
+      register: prometheus_port_pid
+
+    - name: Stop process using port 9090 (if any)
+      shell: "sudo kill -9 {{ prometheus_port_pid.stdout }}"
+      when: prometheus_port_pid.stdout != ""
+      ignore_errors: yes
+
+    - name: Stop old Prometheus container (if exists)
+      shell: |
+        if sudo docker ps --format '{{"{{.Names}}"}}' | grep -q "prometheus"; then
+          sudo docker stop prometheus
+          sudo docker rm prometheus
+        fi
+      ignore_errors: yes
+
+    - name: Start monitoring stack (Prometheus, Grafana, Node Exporter)
+      shell: |
+        mkdir -p /opt/monitoring
+        cd /opt/monitoring
+
+        # Create docker-compose.yml
+        cat > docker-compose.yml <<EOF
+        version: "3"
+        services:
+          prometheus:
+            image: prom/prometheus
+            ports:
+              - "9090:9090"
+            volumes:
+              - ./prometheus.yml:/etc/prometheus/prometheus.yml
+            restart: always
+
+          grafana:
+            image: grafana/grafana
+            ports:
+              - "3000:3000"
+            restart: always
+
+          node_exporter:
+            image: prom/node-exporter
+            ports:
+              - "9100:9100"
+            restart: always
+        EOF
+
+        # Prometheus config file
+        cat > prometheus.yml <<EOF
+        global:
+          scrape_interval: 15s
+        scrape_configs:
+          - job_name: "prometheus"
+            static_configs:
+              - targets: ["localhost:9090"]
+          - job_name: "node_exporter"
+            static_configs:
+              - targets: ["localhost:9100"]
+        EOF
+
+        sudo docker compose up -d
+
