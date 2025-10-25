@@ -1,20 +1,51 @@
 ---
 - name: Setup EC2 Server
-  hosts: ec2
+  hosts: all
   become: yes
   tasks:
+
     - name: Update apt cache
-      apt:
+    - apt:
         update_cache: yes
 
-    - name: Install required packages
+    - name: Remove any old Docker installations
+      apt:
+        name: 
+          - docker
+          - docker.io
+          - docker-engine
+          - containerd
+          - runc
+        state: absent
+
+    - name: Install prerequisites
       apt:
         name:
-          - docker.io
-          - docker-compose
-          - git
+          - apt-transport-https
+          - ca-certificates
           - curl
+          - software-properties-common
         state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+        state: present
+
+    - name: Install Docker and Docker Compose
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
 
     - name: Ensure Docker service is running
       service:
