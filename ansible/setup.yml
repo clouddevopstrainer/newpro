@@ -2,23 +2,18 @@
 - name: Setup EC2 Server
   hosts: all
   become: yes
+
   tasks:
+    - name: Clean conflicting Docker repo if it exists
+      file:
+        path: /etc/apt/sources.list.d/docker.list
+        state: absent
 
     - name: Update apt cache
       apt:
         update_cache: yes
 
-    - name: Remove any old Docker installations
-      apt:
-        name:
-          - docker
-          - docker.io
-          - docker-engine
-          - containerd
-          - runc
-        state: absent
-
-    - name: Install prerequisites
+    - name: Install prerequisite packages
       apt:
         name:
           - apt-transport-https
@@ -33,24 +28,23 @@
         state: directory
         mode: '0755'
 
-    - name: Add Docker GPG key (only if missing)
+    - name: Add Docker’s official GPG key
       shell: |
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
       args:
         creates: /etc/apt/keyrings/docker.gpg
 
-    - name: Remove any conflicting Docker sources
-      file:
-        path: /etc/apt/sources.list.d/docker.list
-        state: absent
-
-    - name: Add Docker repository (clean re-add)
+    - name: Add Docker repository
       apt_repository:
         repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable"
         state: present
         filename: docker
 
-    - name: Install Docker and Docker Compose plugin
+    - name: Update apt cache after adding Docker repo
+      apt:
+        update_cache: yes
+
+    - name: Install Docker and Docker Compose
       apt:
         name:
           - docker-ce
@@ -58,9 +52,8 @@
           - containerd.io
           - docker-compose-plugin
         state: present
-        update_cache: yes
 
-    - name: Ensure Docker is running
+    - name: Enable and start Docker service
       service:
         name: docker
         state: started
@@ -72,5 +65,4 @@
       changed_when: false
 
     - debug:
-        msg: "✅ Docker successfully installed: {{ docker_version.stdout }}"
-
+        msg: "✅ Docker installed successfully: {{ docker_version.stdout }}"
