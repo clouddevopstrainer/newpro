@@ -5,7 +5,7 @@
   tasks:
 
     - name: Update apt cache
-    - apt:
+      apt:
         update_cache: yes
 
     - name: Remove any old Docker installations
@@ -52,3 +52,4 @@
         name: docker
         state: started
         enabled: yes
+
