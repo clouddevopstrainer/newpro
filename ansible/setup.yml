@@ -68,69 +68,79 @@
     - debug:
         msg: "✅ Docker installed successfully: {{ docker_version.stdout }}"
 
-    # ---------------------------------------------------------------------
-    # 🧩 Monitoring Section (auto-fix Prometheus port conflict)
-    # ---------------------------------------------------------------------
-
-    - name: Check if port 9090 is in use
-      shell: "sudo lsof -t -i:9090 || true"
-      register: prometheus_port_pid
-
-    - name: Stop process using port 9090 (if any)
-      shell: "sudo kill -9 {{ prometheus_port_pid.stdout }}"
-      when: prometheus_port_pid.stdout != ""
+    # 🧹 --- ADD THIS SECTION BELOW TO CLEAN OLD MONITORING STACK ---
+    - name: 🧹 Stop and remove any old monitoring containers
+      shell: |
+        sudo docker ps -aq --filter "name=monitoring-" | xargs -r sudo docker rm -f
       ignore_errors: yes
 
-    - name: Stop old Prometheus container (if exists)
+    - name: 🧹 Free ports 3000, 9090, 9100 (Grafana, Prometheus, Node Exporter)
       shell: |
-        if sudo docker ps --format '{{"{{.Names}}"}}' | grep -q "prometheus"; then
-          sudo docker stop prometheus
-          sudo docker rm prometheus
-        fi
+        for port in 3000 9090 9100; do
+          sudo lsof -ti tcp:$port | xargs -r sudo kill -9 || true
+        done
       ignore_errors: yes
 
-    - name: Start monitoring stack (Prometheus, Grafana, Node Exporter)
+    # 🧠 --- OPTIONAL: Confirm ports are free ---
+    - name: Verify that monitoring ports are free
       shell: |
-        mkdir -p /opt/monitoring
+        sudo netstat -tuln | grep -E "3000|9090|9100" || echo "✅ All monitoring ports are free."
+      register: port_status
+      changed_when: false
+    - debug:
+        msg: "{{ port_status.stdout_lines }}"
+
+    # 🚀 --- START MONITORING STACK ---
+    - name: Create monitoring directory
+      file:
+        path: /opt/monitoring
+        state: directory
+        mode: '0755'
+
+    - name: Copy docker-compose file for Prometheus, Grafana, Node Exporter
+      copy:
+        dest: /opt/monitoring/docker-compose.yml
+        content: |
+          version: "3"
+          services:
+            prometheus:
+              image: prom/prometheus
+              ports:
+                - "9090:9090"
+              volumes:
+                - ./prometheus.yml:/etc/prometheus/prometheus.yml
+              restart: always
+
+            grafana:
+              image: grafana/grafana
+              ports:
+                - "3000:3000"
+              environment:
+                - GF_SECURITY_ADMIN_USER=admin
+                - GF_SECURITY_ADMIN_PASSWORD=admin
+              restart: always
+
+            node_exporter:
+              image: prom/node-exporter
+              ports:
+                - "9100:9100"
+              restart: always
+
+    - name: Copy Prometheus configuration
+      copy:
+        dest: /opt/monitoring/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 15s
+          scrape_configs:
+            - job_name: "prometheus"
+              static_configs:
+                - targets: ["localhost:9090"]
+            - job_name: "node_exporter"
+              static_configs:
+                - targets: ["localhost:9100"]
+
+    - name: Start monitoring stack
+      shell: |
         cd /opt/monitoring
-
-        # Create docker-compose.yml
-        cat > docker-compose.yml <<EOF
-        version: "3"
-        services:
-          prometheus:
-            image: prom/prometheus
-            ports:
-              - "9090:9090"
-            volumes:
-              - ./prometheus.yml:/etc/prometheus/prometheus.yml
-            restart: always
-
-          grafana:
-            image: grafana/grafana
-            ports:
-              - "3000:3000"
-            restart: always
-
-          node_exporter:
-            image: prom/node-exporter
-            ports:
-              - "9100:9100"
-            restart: always
-        EOF
-
-        # Prometheus config file
-        cat > prometheus.yml <<EOF
-        global:
-          scrape_interval: 15s
-        scrape_configs:
-          - job_name: "prometheus"
-            static_configs:
-              - targets: ["localhost:9090"]
-          - job_name: "node_exporter"
-            static_configs:
-              - targets: ["localhost:9100"]
-        EOF
-
         sudo docker compose up -d
-
