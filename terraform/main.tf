@@ -5,8 +5,8 @@ provider "aws" {
 # ------------------------------
 # Security Group
 # ------------------------------
-resource "aws_security_group" "devnw5_sg" {
-  name        = "dev-sgnw5"
+resource "aws_security_group" "devnw6_sg" {
+  name        = "devnw6_sg"
   description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana"
 
   ingress {
@@ -57,7 +57,7 @@ resource "aws_security_group" "devnw5_sg" {
   }
 
   tags = {
-    Name = "devnw5_sg"
+    Name = "devnw6_sg"
   }
 }
 
@@ -68,7 +68,7 @@ resource "aws_instance" "app5_servernew" {
   ami                    = var.ami_id
   instance_type          = var.instance_type
   key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.devnw5_sg.id]
+  vpc_security_group_ids = [aws_security_group.devnw6_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
