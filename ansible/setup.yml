@@ -68,79 +68,38 @@
     - debug:
         msg: "✅ Docker installed successfully: {{ docker_version.stdout }}"
 
-    # 🧹 --- ADD THIS SECTION BELOW TO CLEAN OLD MONITORING STACK ---
-    - name: 🧹 Stop and remove any old monitoring containers
-      shell: |
-        sudo docker ps -aq --filter "name=monitoring-" | xargs -r sudo docker rm -f
-      ignore_errors: yes
+    # --------------------- CLEANUP PORTS BEFORE STARTING MONITORING STACK ---------------------
 
-    - name: 🧹 Free ports 3000, 9090, 9100 (Grafana, Prometheus, Node Exporter)
+    - name: 🧹 Free ports used by Prometheus, Grafana, and Node Exporter
+      become: yes
       shell: |
-        for port in 3000 9090 9100; do
-          sudo lsof -ti tcp:$port | xargs -r sudo kill -9 || true
+        for port in 9090 3000 9100; do
+          pid=$(sudo lsof -t -i:$port || true)
+          if [ -n "$pid" ]; then
+            echo "⚠️ Killing process on port $port..."
+            sudo kill -9 $pid || true
+          fi
         done
       ignore_errors: yes
 
-    # 🧠 --- OPTIONAL: Confirm ports are free ---
-    - name: Verify that monitoring ports are free
+    - name: 🧹 Remove any existing Prometheus, Grafana, or Node Exporter containers
+      become: yes
       shell: |
-        sudo netstat -tuln | grep -E "3000|9090|9100" || echo "✅ All monitoring ports are free."
-      register: port_status
-      changed_when: false
-    - debug:
-        msg: "{{ port_status.stdout_lines }}"
+        for name in prometheus grafana node-exporter; do
+          if sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -q "$name"; then
+            echo "🧩 Removing old container: $name"
+            sudo docker stop $name && sudo docker rm $name || true
+          fi
+        done
+      ignore_errors: yes
 
-    # 🚀 --- START MONITORING STACK ---
-    - name: Create monitoring directory
-      file:
-        path: /opt/monitoring
-        state: directory
-        mode: '0755'
+    # --------------------- START MONITORING STACK ---------------------
 
-    - name: Copy docker-compose file for Prometheus, Grafana, Node Exporter
-      copy:
-        dest: /opt/monitoring/docker-compose.yml
-        content: |
-          version: "3"
-          services:
-            prometheus:
-              image: prom/prometheus
-              ports:
-                - "9090:9090"
-              volumes:
-                - ./prometheus.yml:/etc/prometheus/prometheus.yml
-              restart: always
-
-            grafana:
-              image: grafana/grafana
-              ports:
-                - "3000:3000"
-              environment:
-                - GF_SECURITY_ADMIN_USER=admin
-                - GF_SECURITY_ADMIN_PASSWORD=admin
-              restart: always
-
-            node_exporter:
-              image: prom/node-exporter
-              ports:
-                - "9100:9100"
-              restart: always
-
-    - name: Copy Prometheus configuration
-      copy:
-        dest: /opt/monitoring/prometheus.yml
-        content: |
-          global:
-            scrape_interval: 15s
-          scrape_configs:
-            - job_name: "prometheus"
-              static_configs:
-                - targets: ["localhost:9090"]
-            - job_name: "node_exporter"
-              static_configs:
-                - targets: ["localhost:9100"]
-
-    - name: Start monitoring stack
+    - name: 🚀 Start monitoring stack (Prometheus, Grafana, Node Exporter)
+      become: yes
       shell: |
         cd /opt/monitoring
         sudo docker compose up -d
+      args:
+        chdir: /opt/monitoring
+      ignore_errors: no
