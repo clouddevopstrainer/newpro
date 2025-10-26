@@ -72,7 +72,6 @@
 
     # --------------------- CLEANUP OLD MONITORING STACK ---------------------
     - name: 🧹 Free ports used by Prometheus, Grafana, and Node Exporter
-      become: yes
       shell: |
         for port in 9090 3000 9100; do
           pid=$(sudo lsof -t -i:$port || true)
@@ -84,7 +83,6 @@
       ignore_errors: yes
 
     - name: 🧹 Remove any existing Prometheus, Grafana, or Node Exporter containers
-      become: yes
       shell: |
         for name in prometheus grafana node-exporter; do
           if sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -q "$name"; then
@@ -119,7 +117,6 @@
       copy:
         dest: /opt/monitoring/docker-compose.yml
         content: |
-          version: '3'
           services:
             prometheus:
               image: prom/prometheus
@@ -151,15 +148,34 @@
     - name: 🚀 Start monitoring stack (Prometheus, Grafana, Node Exporter)
       become: yes
       shell: |
-        cd /opt/monitoring
-        sudo docker compose up -d
+        set -e
+        MONITORING_DIR=/opt/monitoring
+        sudo mkdir -p $MONITORING_DIR
+        cd $MONITORING_DIR
+
+        echo "🧹 Cleaning up old monitoring containers and freeing ports..."
+        # Stop and remove old containers
+        sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node-exporter' | xargs -r sudo docker rm -f || true
+
+        # Free ports
+        for port in 3000 9090 9100; do
+          pid=$(sudo lsof -t -i:$port || true)
+          if [ -n "$pid" ]; then
+            echo "⚠️ Killing process using port $port (PID: $pid)"
+            sudo kill -9 $pid || true
+          fi
+        done
+
+        # Clean Docker networks, volumes, system
+        sudo docker network prune -f || true
+        sudo docker volume prune -f || true
+        sudo docker system prune -f || true
+
+        echo "🚀 Deploying fresh monitoring stack..."
+        sudo docker compose up -d --remove-orphans
+
+        echo "✅ Docker containers running:"
+        sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
       args:
         chdir: /opt/monitoring
-
-    - name: ✅ Verify running containers
-      shell: sudo docker ps
-      register: docker_ps
-      changed_when: false
-
-    - debug:
-        msg: "{{ docker_ps.stdout_lines }}"
+      ignore_errors: no
