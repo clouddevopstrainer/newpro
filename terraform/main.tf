@@ -7,7 +7,7 @@ provider "aws" {
 # ------------------------------
 resource "aws_security_group" "devnw6_sg" {
   name        = "devnw6_sg"
-  description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana"
+  description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter"
 
   ingress {
     description = "SSH"
@@ -45,6 +45,14 @@ resource "aws_security_group" "devnw6_sg" {
     description = "Grafana"
     from_port   = 3000
     to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Node Exporter"
+    from_port   = 9100
+    to_port     = 9100
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -105,35 +113,6 @@ resource "aws_instance" "app5_servernew" {
               curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
               install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
               rm -f minikube-linux-amd64 kubectl
-
-              # -------------------
-              # Setup Prometheus
-              # -------------------
-              mkdir -p /opt/prometheus
-              cat <<EOPROM > /opt/prometheus/prometheus.yml
-              global:
-                scrape_interval: 15s
-
-              scrape_configs:
-                - job_name: 'prometheus'
-                  static_configs:
-                    - targets: ['localhost:9090']
-              EOPROM
-
-              docker run -d \
-                --name prometheus \
-                -p 9090:9090 \
-                -v /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
-                prom/prometheus
-
-              # -------------------
-              # Setup Grafana
-              # -------------------
-              docker run -d \
-                --name grafana \
-                -p 3000:3000 \
-                grafana/grafana
-
               EOF
 
   tags = {
