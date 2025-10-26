@@ -2,37 +2,46 @@
 - name: 🚀 Deploy Prometheus, Grafana, Node Exporter
   hosts: all
   become: yes
+  vars:
+    monitoring_dir: /opt/monitoring
+
   tasks:
 
     - name: Ensure /opt/monitoring directory exists
       file:
-        path: /opt/monitoring
+        path: "{{ monitoring_dir }}"
         state: directory
         mode: '0755'
 
-    - name: Clean old monitoring containers and free ports
+    - name: Stop and remove old monitoring containers
       shell: |
         set -e
-        echo "🧹 Cleaning old monitoring containers..."
-        sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
+        containers=$(sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' || true)
+        if [ -n "$containers" ]; then
+          echo "🧹 Removing old monitoring containers..."
+          echo "$containers" | xargs -r sudo docker rm -f
+        fi
 
-        echo "🧹 Freeing ports 3000, 9090, 9100..."
+    - name: Kill processes using ports 3000, 9090, 9100
+      shell: |
+        set -e
         for port in 3000 9090 9100; do
-          pid=$(sudo lsof -t -i:$port || true)
+          pid=$(sudo lsof -ti tcp:$port || true)
           if [ -n "$pid" ]; then
             echo "⚠️ Killing process using port $port (PID: $pid)"
             sudo kill -9 $pid || true
           fi
         done
 
-        echo "🧹 Cleaning Docker networks, volumes, and system..."
+    - name: Clean Docker networks, volumes, and system
+      shell: |
         sudo docker network prune -f || true
         sudo docker volume prune -f || true
         sudo docker system prune -f || true
 
     - name: Copy Prometheus configuration file
       copy:
-        dest: /opt/monitoring/prometheus.yml
+        dest: "{{ monitoring_dir }}/prometheus.yml"
         content: |
           global:
             scrape_interval: 15s
@@ -46,7 +55,7 @@
 
     - name: Copy docker-compose.yml for monitoring stack
       copy:
-        dest: /opt/monitoring/docker-compose.yml
+        dest: "{{ monitoring_dir }}/docker-compose.yml"
         content: |
           version: "3.9"
           services:
@@ -57,7 +66,7 @@
                 - "9090:9090"
               volumes:
                 - ./prometheus.yml:/etc/prometheus/prometheus.yml
-              restart: unless-stopped
+              restart: always
 
             grafana:
               image: grafana/grafana
@@ -67,7 +76,7 @@
               environment:
                 - GF_SECURITY_ADMIN_USER=admin
                 - GF_SECURITY_ADMIN_PASSWORD=admin
-              restart: unless-stopped
+              restart: always
 
             node_exporter:
               image: prom/node-exporter
@@ -82,14 +91,13 @@
                 - '--path.procfs=/host/proc'
                 - '--path.sysfs=/host/sys'
                 - '--path.rootfs=/rootfs'
-              restart: unless-stopped
+              restart: always
 
-    - name: Start monitoring stack
+    - name: Start monitoring stack using docker-compose
       shell: |
         set -e
-        cd /opt/monitoring
+        cd "{{ monitoring_dir }}"
         echo "🚀 Deploying monitoring stack..."
         sudo docker compose up -d --remove-orphans
         echo "✅ Docker containers running:"
         sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
