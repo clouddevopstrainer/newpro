@@ -14,8 +14,7 @@
       shell: |
         set -e
         echo "🧹 Cleaning old monitoring containers..."
-        # Escape curly braces for Jinja2
-        sudo docker ps -a --format '{{'{{.Names}}'}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
+        sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
 
         echo "🧹 Freeing ports 3000, 9090, 9100..."
         for port in 3000 9090 9100; do
@@ -30,8 +29,6 @@
         sudo docker network prune -f || true
         sudo docker volume prune -f || true
         sudo docker system prune -f || true
-      args:
-        warn: false
 
     - name: Copy Prometheus configuration file
       copy:
@@ -60,7 +57,7 @@
                 - "9090:9090"
               volumes:
                 - ./prometheus.yml:/etc/prometheus/prometheus.yml
-              restart: always
+              restart: unless-stopped
 
             grafana:
               image: grafana/grafana
@@ -70,7 +67,7 @@
               environment:
                 - GF_SECURITY_ADMIN_USER=admin
                 - GF_SECURITY_ADMIN_PASSWORD=admin
-              restart: always
+              restart: unless-stopped
 
             node_exporter:
               image: prom/node-exporter
@@ -85,7 +82,7 @@
                 - '--path.procfs=/host/proc'
                 - '--path.sysfs=/host/sys'
                 - '--path.rootfs=/rootfs'
-              restart: always
+              restart: unless-stopped
 
     - name: Start monitoring stack
       shell: |
@@ -94,7 +91,5 @@
         echo "🚀 Deploying monitoring stack..."
         sudo docker compose up -d --remove-orphans
         echo "✅ Docker containers running:"
-        sudo docker ps --format "table {{'{{.Names}}'}}\t{{'{{.Status}}'}}\t{{'{{.Ports}}'}}"
-      args:
-        chdir: /opt/monitoring
+        sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
