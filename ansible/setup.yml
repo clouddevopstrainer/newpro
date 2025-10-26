@@ -1,38 +1,36 @@
-# --------------------- START MONITORING STACK ---------------------
-- name: 🚀 Deploy Prometheus, Grafana, Node Exporter
+---
+- name: 🚀 Deploy Monitoring Stack
   hosts: all
   become: yes
-  vars:
-    monitoring_dir: /opt/monitoring
-    containers:
-      - monitoring-prometheus
-      - monitoring-grafana
-      - monitoring-node_exporter
   tasks:
 
     - name: Ensure /opt/monitoring directory exists
       file:
-        path: "{{ monitoring_dir }}"
+        path: /opt/monitoring
         state: directory
         mode: '0755'
 
-    - name: Remove old monitoring containers
-      community.docker.docker_container:
-        name: "{{ item }}"
-        state: absent
-        force_kill: yes
-      loop: "{{ containers }}"
+    - name: Stop old monitoring containers
+      ansible.builtin.shell: |
+        containers=$(sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' || true)
+        if [ -n "$containers" ]; then
+          echo "🧹 Removing old monitoring containers..."
+          echo "$containers" | xargs -r sudo docker rm -f
+        fi
+      args:
+        executable: /bin/bash
 
-    - name: Clean Docker unused networks and volumes
-      community.docker.docker_prune:
-        images: no
-        containers: no
-        networks: yes
-        volumes: yes
+    - name: Remove old monitoring networks and volumes
+      ansible.builtin.shell: |
+        sudo docker network prune -f || true
+        sudo docker volume prune -f || true
+        sudo docker system prune -f || true
+      args:
+        executable: /bin/bash
 
-    - name: Copy Prometheus configuration file
+    - name: Copy Prometheus configuration
       copy:
-        dest: "{{ monitoring_dir }}/prometheus.yml"
+        dest: /opt/monitoring/prometheus.yml
         content: |
           global:
             scrape_interval: 15s
@@ -44,11 +42,11 @@
               static_configs:
                 - targets: ['node_exporter:9100']
 
-    - name: Copy docker-compose.yml for monitoring stack
+    - name: Copy Docker Compose file
       copy:
-        dest: "{{ monitoring_dir }}/docker-compose.yml"
+        dest: /opt/monitoring/docker-compose.yml
         content: |
-          version: '3'
+          version: "3"
           services:
             prometheus:
               image: prom/prometheus
@@ -84,7 +82,10 @@
                 - '--path.rootfs=/rootfs'
               restart: always
 
-    - name: Start monitoring stack with Docker Compose
-      community.docker.docker_compose:
-        project_src: "{{ monitoring_dir }}"
-        state: present
+    - name: Start monitoring stack
+      ansible.builtin.shell: |
+        cd /opt/monitoring
+        sudo docker compose up -d --remove-orphans
+        echo "✅ Monitoring stack deployed successfully"
+      args:
+        executable: /bin/bash
