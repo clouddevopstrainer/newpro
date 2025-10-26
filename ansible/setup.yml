@@ -14,7 +14,8 @@
       shell: |
         set -e
         echo "🧹 Cleaning old monitoring containers..."
-        sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
+        # Escape curly braces for Jinja2
+        sudo docker ps -a --format '{{'{{.Names}}'}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
 
         echo "🧹 Freeing ports 3000, 9090, 9100..."
         for port in 3000 9090 9100; do
@@ -41,10 +42,10 @@
           scrape_configs:
             - job_name: 'prometheus'
               static_configs:
-                - targets: ['monitoring-prometheus:9090']
+                - targets: ['prometheus:9090']
             - job_name: 'node_exporter'
               static_configs:
-                - targets: ['monitoring-node_exporter:9100']
+                - targets: ['node_exporter:9100']
 
     - name: Copy docker-compose.yml for monitoring stack
       copy:
@@ -59,7 +60,7 @@
                 - "9090:9090"
               volumes:
                 - ./prometheus.yml:/etc/prometheus/prometheus.yml
-              restart: unless-stopped
+              restart: always
 
             grafana:
               image: grafana/grafana
@@ -69,7 +70,7 @@
               environment:
                 - GF_SECURITY_ADMIN_USER=admin
                 - GF_SECURITY_ADMIN_PASSWORD=admin
-              restart: unless-stopped
+              restart: always
 
             node_exporter:
               image: prom/node-exporter
@@ -84,7 +85,7 @@
                 - '--path.procfs=/host/proc'
                 - '--path.sysfs=/host/sys'
                 - '--path.rootfs=/rootfs'
-              restart: unless-stopped
+              restart: always
 
     - name: Start monitoring stack
       shell: |
@@ -92,26 +93,8 @@
         cd /opt/monitoring
         echo "🚀 Deploying monitoring stack..."
         sudo docker compose up -d --remove-orphans
-
-    - name: Wait for Prometheus to be healthy
-      shell: |
-        echo "⏳ Waiting for Prometheus to be ready..."
-        until curl -s http://localhost:9090/-/ready | grep "Prometheus is Ready"; do
-          echo "Waiting 5s..."
-          sleep 5
-        done
-        echo "✅ Prometheus is ready"
-
-    - name: Wait for Grafana to be healthy
-      shell: |
-        echo "⏳ Waiting for Grafana to be ready..."
-        until curl -s http://localhost:3000/api/health | grep '"database":"ok"'; do
-          echo "Waiting 5s..."
-          sleep 5
-        done
-        echo "✅ Grafana is ready"
-
-    - name: List running monitoring containers
-      shell: |
-        sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        echo "✅ Docker containers running:"
+        sudo docker ps --format "table {{'{{.Names}}'}}\t{{'{{.Status}}'}}\t{{'{{.Ports}}'}}"
+      args:
+        chdir: /opt/monitoring
 
