@@ -1,105 +1,35 @@
----
-- name: Setup EC2 Server with Docker, Prometheus, Grafana, and Node Exporter
+# --------------------- START MONITORING STACK ---------------------
+- name: 🚀 Deploy Prometheus, Grafana, Node Exporter
   hosts: all
   become: yes
-
   tasks:
-    # --------------------- CLEANUP OLD DOCKER SOURCES ---------------------
-    - name: 🔥 Clean any leftover Docker repo files or entries
-      shell: |
-        sudo rm -f /etc/apt/sources.list.d/docker.list
-        sudo rm -f /etc/apt/sources.list.d/*docker*.list
-        sudo sed -i '/download.docker.com/d' /etc/apt/sources.list || true
-        sudo apt-get clean
-        sudo apt-get update -y
-      ignore_errors: yes
-
-    # --------------------- INSTALL DOCKER ---------------------
-    - name: Install prerequisite packages
-      apt:
-        name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - software-properties-common
-        state: present
-        update_cache: yes
-
-    - name: Ensure Docker keyring directory exists
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Add Docker’s official GPG key
-      shell: |
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      args:
-        creates: /etc/apt/keyrings/docker.gpg
-
-    - name: Add Docker repository cleanly
-      shell: |
-        echo \
-        "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] \
-        https://download.docker.com/linux/ubuntu jammy stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    - name: Update apt cache after adding Docker repo
-      shell: sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/docker.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
-
-    - name: Install Docker and Docker Compose
-      apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-compose-plugin
-        state: present
-
-    - name: Enable and start Docker service
-      service:
-        name: docker
-        state: started
-        enabled: yes
-
-    - name: Verify Docker installation
-      shell: docker --version
-      register: docker_version
-      changed_when: false
-
-    - debug:
-        msg: "✅ Docker installed successfully: {{ docker_version.stdout }}"
-
-    # --------------------- CLEANUP OLD MONITORING STACK ---------------------
-    - name: 🧹 Free ports used by Prometheus, Grafana, and Node Exporter
-      become: yes
-      shell: |
-        for port in 9090 3000 9100; do
-          pid=$(sudo lsof -t -i:$port || true)
-          if [ -n "$pid" ]; then
-            echo "⚠️ Killing process on port $port..."
-            sudo kill -9 $pid || true
-          fi
-        done
-      ignore_errors: yes
-
-    - name: 🧹 Remove any existing Prometheus, Grafana, or Node Exporter containers
-      become: yes
-      shell: |
-        for name in prometheus grafana node-exporter; do
-          if sudo docker ps -a --format '{{.Names}}' | grep -q "$name"; then
-            echo "🧩 Removing old container: $name"
-            sudo docker stop $name && sudo docker rm $name || true
-          fi
-        done
-      ignore_errors: yes
-
-    # --------------------- CREATE MONITORING STACK FILES ---------------------
     - name: Ensure /opt/monitoring directory exists
       file:
         path: /opt/monitoring
         state: directory
         mode: '0755'
+
+    - name: Clean old monitoring containers and free ports
+      shell: |
+        set -e
+        echo "🧹 Cleaning old monitoring containers..."
+        sudo docker ps -a --format '{{.Names}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' | xargs -r sudo docker rm -f || true
+
+        echo "🧹 Freeing ports 3000, 9090, 9100..."
+        for port in 3000 9090 9100; do
+          pid=$(sudo lsof -t -i:$port || true)
+          if [ -n "$pid" ]; then
+            echo "⚠️ Killing process using port $port (PID: $pid)"
+            sudo kill -9 $pid || true
+          fi
+        done
+
+        echo "🧹 Cleaning Docker networks, volumes, and system..."
+        sudo docker network prune -f || true
+        sudo docker volume prune -f || true
+        sudo docker system prune -f || true
+      args:
+        warn: false
 
     - name: Copy Prometheus configuration file
       copy:
@@ -110,10 +40,10 @@
           scrape_configs:
             - job_name: 'prometheus'
               static_configs:
-                - targets: ['localhost:9090']
+                - targets: ['prometheus:9090']
             - job_name: 'node_exporter'
               static_configs:
-                - targets: ['localhost:9100']
+                - targets: ['node_exporter:9100']
 
     - name: Copy docker-compose.yml for monitoring stack
       copy:
@@ -122,16 +52,16 @@
           services:
             prometheus:
               image: prom/prometheus
-              container_name: prometheus
+              container_name: monitoring-prometheus
               ports:
                 - "9090:9090"
               volumes:
-                - /opt/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+                - ./prometheus.yml:/etc/prometheus/prometheus.yml
               restart: always
 
             grafana:
               image: grafana/grafana
-              container_name: grafana
+              container_name: monitoring-grafana
               ports:
                 - "3000:3000"
               environment:
@@ -141,48 +71,26 @@
 
             node-exporter:
               image: prom/node-exporter
-              container_name: node-exporter
+              container_name: monitoring-node_exporter
               ports:
                 - "9100:9100"
+              volumes:
+                - /proc:/host/proc:ro
+                - /sys:/host/sys:ro
+                - /:/rootfs:ro
+              command:
+                - '--path.procfs=/host/proc'
+                - '--path.sysfs=/host/sys'
+                - '--path.rootfs=/rootfs'
               restart: always
 
-    # --------------------- START MONITORING STACK ---------------------
-    - name: 🚀 Start monitoring stack (Prometheus, Grafana, Node Exporter)
-      become: yes
+    - name: Start monitoring stack
       shell: |
         set -e
-        MONITORING_DIR=/opt/monitoring
-        sudo mkdir -p $MONITORING_DIR
-        cd $MONITORING_DIR
-
-        echo "🧹 Cleaning up old monitoring containers and freeing ports..."
-        sudo docker ps -a --format '{{.Names}}' | grep -E 'prometheus|grafana|node-exporter' | xargs -r sudo docker rm -f || true
-
-        for port in 3000 9090 9100; do
-          pid=$(sudo lsof -t -i:$port || true)
-          if [ -n "$pid" ]; then
-            echo "⚠️ Killing process using port $port (PID: $pid)"
-            sudo kill -9 $pid || true
-          fi
-        done
-
-        sudo docker network prune -f || true
-        sudo docker volume prune -f || true
-        sudo docker system prune -f || true
-
-        echo "🚀 Deploying fresh monitoring stack..."
+        cd /opt/monitoring
+        echo "🚀 Deploying monitoring stack..."
         sudo docker compose up -d --remove-orphans
-
         echo "✅ Docker containers running:"
-        sudo docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+        sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
       args:
         chdir: /opt/monitoring
-      ignore_errors: no
-
-    - name: ✅ Verify running containers
-      shell: sudo docker ps
-      register: docker_ps
-      changed_when: false
-
-    - debug:
-        msg: "{{ docker_ps.stdout_lines }}"
