@@ -5,8 +5,8 @@ provider "aws" {
 # ------------------------------
 # Security Group
 # ------------------------------
-resource "aws_security_group" "devnw10_sg" {
-  name        = "devnw10_sg"
+resource "aws_security_group" "devnw20_sg" {
+  name        = "devnw20_sg"
   description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter"
 
   ingress {
@@ -65,18 +65,18 @@ resource "aws_security_group" "devnw10_sg" {
   }
 
   tags = {
-    Name = "devnw10_sg"
+    Name = "devnw20_sg"
   }
 }
 
 # ------------------------------
 # EC2 Instance
 # ------------------------------
-resource "aws_instance" "app9_servernew" {
+resource "aws_instance" "app20_servernew" {
   ami                    = var.ami_id
   instance_type          = var.instance_type
   key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.devnw10_sg_sg.id]
+  vpc_security_group_ids = [aws_security_group.devnw20_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
@@ -116,7 +116,7 @@ resource "aws_instance" "app9_servernew" {
               EOF
 
   tags = {
-    Name = "app9_servernew"
+    Name = "app20_servernew"
   }
 }
 
@@ -124,5 +124,5 @@ resource "aws_instance" "app9_servernew" {
 # Output
 # ------------------------------
 output "instance_public_ip" {
-  value = aws_instance.app9_servernew.public_ip
+  value = aws_instance.app20_servernew.public_ip
 }
