@@ -13,7 +13,7 @@ variable "instance_type" {
 variable "key_name" {
   description = "Existing EC2 Key Pair name for SSH access"
   type        = string
-  default     = "tf"
+  default     = "tfnew"
 }
 
 variable "ami_id" {
