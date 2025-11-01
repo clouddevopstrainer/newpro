@@ -15,6 +15,17 @@
         - /opt/app
         - /opt/monitoring
 
+    # --- Install Java ---
+    - name: Install Java if not already installed
+      ansible.builtin.shell: |
+        if ! command -v java &> /dev/null; then
+          sudo apt update -y
+          sudo apt install -y openjdk-17-jdk
+        fi
+        java -version
+      args:
+        executable: /bin/bash
+
     # --- Firewall rules ---
     - name: Allow required ports (8080, 9090, 3000, 9100)
       ansible.builtin.shell: |
@@ -125,7 +136,7 @@
 
           [Service]
           User=ubuntu
-          ExecStart=/usr/bin/java -jar /opt/app/springboot-app.jar
+          ExecStart=/usr/bin/env java -jar /opt/app/springboot-app.jar
           SuccessExitStatus=143
           Restart=always
           RestartSec=10
