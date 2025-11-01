@@ -111,7 +111,7 @@
     # --- Deploy Spring Boot app ---
     - name: Copy application JAR
       copy:
-        src: /var/lib/jenkins/workspace/Pipelinejob/target/springboot-app.jar
+        src: /var/lib/jenkins/workspace/Pipelinejob/target/springboot-app-1.0.0.jar
         dest: /opt/app/springboot-app.jar
         mode: '0755'
 
