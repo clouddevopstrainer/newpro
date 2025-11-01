@@ -1,15 +1,32 @@
 ---
-- name: 🚀 Deploy Monitoring Stack
+- name: 🚀 Deploy Monitoring + Application Stack
   hosts: all
   become: yes
+
   tasks:
 
-    - name: Ensure /opt/monitoring directory exists
+    # --- Setup base directory ---
+    - name: Ensure /opt/app and /opt/monitoring directories exist
       file:
-        path: /opt/monitoring
+        path: "{{ item }}"
         state: directory
         mode: '0755'
+      loop:
+        - /opt/app
+        - /opt/monitoring
 
+    # --- Firewall rules ---
+    - name: Allow required ports (8080, 9090, 3000, 9100)
+      ansible.builtin.shell: |
+        sudo ufw allow 8080 || true
+        sudo ufw allow 9090 || true
+        sudo ufw allow 3000 || true
+        sudo ufw allow 9100 || true
+        sudo ufw reload || true
+      args:
+        executable: /bin/bash
+
+    # --- Stop old monitoring containers ---
     - name: Stop old monitoring containers
       ansible.builtin.shell: |
         containers=$(sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' || true)
@@ -20,7 +37,7 @@
       args:
         executable: /bin/bash
 
-    - name: Remove old monitoring networks and volumes
+    - name: Remove old Docker networks and volumes
       ansible.builtin.shell: |
         sudo docker network prune -f || true
         sudo docker volume prune -f || true
@@ -28,6 +45,7 @@
       args:
         executable: /bin/bash
 
+    # --- Monitoring Config ---
     - name: Copy Prometheus configuration
       copy:
         dest: /opt/monitoring/prometheus.yml
@@ -42,7 +60,7 @@
               static_configs:
                 - targets: ['node_exporter:9100']
 
-    - name: Copy Docker Compose file
+    - name: Copy Docker Compose for monitoring
       copy:
         dest: /opt/monitoring/docker-compose.yml
         content: |
@@ -89,3 +107,54 @@
         echo "✅ Monitoring stack deployed successfully"
       args:
         executable: /bin/bash
+
+    # --- Deploy Spring Boot app ---
+    - name: Copy application JAR
+      copy:
+        src: /var/lib/jenkins/workspace/Pipelinejob/target/springboot-app.jar
+        dest: /opt/app/springboot-app.jar
+        mode: '0755'
+
+    - name: Create systemd service for Spring Boot
+      copy:
+        dest: /etc/systemd/system/springboot-app.service
+        content: |
+          [Unit]
+          Description=Spring Boot Application
+          After=network.target
+
+          [Service]
+          User=ubuntu
+          ExecStart=/usr/bin/java -jar /opt/app/springboot-app.jar
+          SuccessExitStatus=143
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+          Environment=SERVER_PORT=8080
+          Environment=SERVER_ADDRESS=0.0.0.0
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd and start the Spring Boot service
+      ansible.builtin.shell: |
+        sudo systemctl daemon-reload
+        sudo systemctl enable springboot-app
+        sudo systemctl restart springboot-app
+        sudo systemctl status springboot-app --no-pager
+      args:
+        executable: /bin/bash
+
+    - name: Verify app is running
+      uri:
+        url: "http://localhost:8080/api/hello"
+        return_content: yes
+      register: app_response
+      retries: 5
+      delay: 5
+      until: app_response.status == 200
+
+    - name: Print success message
+      debug:
+        msg: "✅ Application & Monitoring Stack deployed successfully and accessible externally!"
