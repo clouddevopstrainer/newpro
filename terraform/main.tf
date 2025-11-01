@@ -5,7 +5,7 @@ provider "aws" {
 # ------------------------------
 # Security Group
 # ------------------------------
-resource "aws_security_group" "devnw8_sg" {
+resource "aws_security_group" "devnw08_sg" {
   name        = "devnw8_sg"
   description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter"
 
