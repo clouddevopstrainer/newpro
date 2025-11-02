@@ -17,14 +17,15 @@
         - /opt/monitoring
 
     # --- Fix apt and install Java (robust version) ---
-    - name: Fix broken apt and install Java
+    - name: Fix apt sources and install Java 17
       ansible.builtin.shell: |
-        echo "🔧 Fixing apt sources and updating packages..."
-        sudo rm -rf /var/lib/apt/lists/*
-        sudo apt-get clean
+        echo "🔧 Ensuring apt repositories are configured properly..."
+        sudo add-apt-repository universe -y || true
+        sudo add-apt-repository multiverse -y || true
+        sudo add-apt-repository restricted -y || true
         sudo apt-get update -y --fix-missing
         sudo apt-get install -f -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk-headless
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk
         java -version
       args:
         executable: /bin/bash
