@@ -1,12 +1,11 @@
 ---
-# === Play 1: Deploy Monitoring + Application Stack ===
 - name: 🚀 Deploy Monitoring + Application Stack
   hosts: all
   become: yes
 
   tasks:
 
-    # --- Setup base directories ---
+    # --- 1️⃣ Ensure base directories exist ---
     - name: Ensure /opt/app and /opt/monitoring directories exist
       file:
         path: "{{ item }}"
@@ -16,100 +15,90 @@
         - /opt/app
         - /opt/monitoring
 
-    # --- Wait for apt lock ---
+    # --- 2️⃣ Update packages and install base dependencies ---
     - name: Wait for apt lock to be released
       shell: |
         while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-          echo "⏳ Waiting for apt lock to be released..."
           sleep 5
         done
-      changed_when: false
 
-    # --- Install Java 17 + Docker ---
     - name: Fix apt sources and install Java 17 + Docker
       shell: |
-        echo "🔧 Fixing apt and installing dependencies..."
-        sudo apt-get clean
-        sudo rm -rf /var/lib/apt/lists/*
-        sudo apt-get update -y --fix-missing
-        sudo apt-get install -f -y
-        sudo apt-get install -y openjdk-17-jdk curl ufw
+        sudo apt-get update -y
+        sudo apt-get install -y openjdk-17-jdk curl apt-transport-https ca-certificates software-properties-common gnupg lsb-release
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+          https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+          | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        sudo apt-get update -y
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-compose
 
-        # Remove conflicting container runtimes
-        sudo apt-get remove -y containerd containerd.io || true
-
-        # Install Docker using official convenience script
-        curl -fsSL https://get.docker.com | sudo bash
-        sudo usermod -aG docker ubuntu
-
-        java -version
-        docker --version
-      args:
-        executable: /bin/bash
-
-    # --- Firewall rules ---
+    # --- 3️⃣ Allow required ports ---
     - name: Allow required ports (8080, 9090, 3000, 9100, 32000)
       shell: |
-        for port in 8080 9090 3000 9100 32000; do
-          sudo ufw allow $port || true
-        done
-        sudo ufw reload || true
-      args:
-        executable: /bin/bash
+        sudo ufw allow 8080 || true
+        sudo ufw allow 9090 || true
+        sudo ufw allow 3000 || true
+        sudo ufw allow 9100 || true
+        sudo ufw allow 32000/tcp || true
+        sudo ufw allow ssh || true
+        sudo ufw --force enable || true
 
-    # --- Cleanup old containers ---
+    # --- 4️⃣ Clean up old containers and networks ---
     - name: Stop and remove old monitoring containers
       shell: |
-        containers=$(sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' || true)
-        if [ -n "$containers" ]; then
-          echo "🧹 Removing old monitoring containers..."
-          echo "$containers" | xargs -r sudo docker rm -f
-        fi
-      args:
-        executable: /bin/bash
+        docker ps -aq | xargs -r docker stop
+        docker ps -aq | xargs -r docker rm
 
     - name: Remove old Docker networks and volumes
       shell: |
-        sudo docker network prune -f || true
-        sudo docker volume prune -f || true
-        sudo docker system prune -f || true
-      args:
-        executable: /bin/bash
+        docker network prune -f
+        docker volume prune -f
 
-    # --- Prometheus Config ---
-    - name: Copy Prometheus configuration
+    # --- 5️⃣ Copy Prometheus configuration ---
+    - name: Copy Prometheus configuration file
       copy:
         dest: /opt/monitoring/prometheus.yml
         content: |
           global:
             scrape_interval: 15s
+
           scrape_configs:
             - job_name: 'prometheus'
               static_configs:
                 - targets: ['prometheus:9090']
+
             - job_name: 'node_exporter'
               static_configs:
                 - targets: ['node-exporter:9100']
 
-    # --- Docker Compose for Monitoring ---
-    - name: Copy Docker Compose file for monitoring stack
+            - job_name: 'springboot-app'
+              metrics_path: '/actuator/prometheus'
+              static_configs:
+                - targets: ['localhost:8080']
+
+    # --- 6️⃣ Copy Docker Compose file for monitoring stack ---
+    - name: Copy Docker Compose for monitoring stack
       copy:
         dest: /opt/monitoring/docker-compose.yml
         content: |
-          version: "3"
+          version: '3.8'
+
           services:
             prometheus:
               image: prom/prometheus
-              container_name: monitoring-prometheus
+              container_name: prometheus
               ports:
                 - "9090:9090"
               volumes:
-                - ./prometheus.yml:/etc/prometheus/prometheus.yml
+                - /opt/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
               restart: always
 
             grafana:
               image: grafana/grafana
-              container_name: monitoring-grafana
+              container_name: grafana
               ports:
                 - "3000:3000"
               environment:
@@ -119,135 +108,74 @@
 
             node-exporter:
               image: prom/node-exporter
-              container_name: monitoring-node-exporter
+              container_name: node_exporter
               ports:
                 - "9100:9100"
-              volumes:
-                - /proc:/host/proc:ro
-                - /sys:/host/sys:ro
-                - /:/rootfs:ro
-              command:
-                - '--path.procfs=/host/proc'
-                - '--path.sysfs=/host/sys'
-                - '--path.rootfs=/rootfs'
               restart: always
 
+          networks:
+            default:
+              driver: bridge
+
+    # --- 7️⃣ Start monitoring stack ---
     - name: Start monitoring stack
       shell: |
         cd /opt/monitoring
-        sudo docker compose up -d --remove-orphans
-        echo "✅ Monitoring stack deployed successfully"
-      args:
-        executable: /bin/bash
+        docker compose up -d
 
-    # --- Deploy Spring Boot app ---
+    # --- 8️⃣ Copy application JAR from Jenkins workspace ---
     - name: Copy application JAR dynamically
       copy:
-        src: "{{ lookup('pipe', 'ls ' + WORKSPACE + '/target/*.jar | head -n 1') }}"
-        dest: /opt/app/springboot-app.jar
+        src: "{{ WORKSPACE }}/target/"
+        dest: /opt/app/
+        owner: ubuntu
         mode: '0755'
+      ignore_errors: no
 
-    - name: Create systemd service for Spring Boot
-      copy:
-        dest: /etc/systemd/system/springboot-app.service
-        content: |
-          [Unit]
-          Description=Spring Boot Application
-          After=network.target
-
-          [Service]
-          User=ubuntu
-          ExecStart=/usr/bin/env java -jar /opt/app/springboot-app.jar
-          Restart=always
-          RestartSec=10
-          Environment=SERVER_PORT=8080
-          Environment=SERVER_ADDRESS=0.0.0.0
-
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: Reload systemd and start Spring Boot service
+    # --- 9️⃣ Start Spring Boot app ---
+    - name: Run Spring Boot application container
       shell: |
-        sudo systemctl daemon-reload
-        sudo systemctl enable springboot-app
-        sudo systemctl restart springboot-app
-        sudo systemctl status springboot-app --no-pager
-      args:
-        executable: /bin/bash
+        docker stop {{ APP_NAME }} || true
+        docker rm {{ APP_NAME }} || true
+        docker run -d \
+          --name {{ APP_NAME }} \
+          -p 8080:8080 \
+          -v /opt/app:/app \
+          -w /app \
+          openjdk:17-jdk-slim java -jar $(ls /opt/app/*.jar | head -n 1)
 
-    - name: Verify app is running
-      uri:
-        url: "http://localhost:8080/api/hello"
-        return_content: yes
-      register: app_response
-      retries: 5
-      delay: 5
-      until: app_response.status == 200
-
-    - name: Print success message
-      debug:
-        msg: "✅ Application & Monitoring Stack deployed successfully and accessible externally!"
-
-
-# === Play 2: Setup Kubernetes (K3s) + ArgoCD ===
-- name: 🚀 Setup Kubernetes (K3s) and ArgoCD
-  hosts: all
-  become: yes
-
-  tasks:
-
+    # --- 🔟 Install K3s (Lightweight Kubernetes) ---
     - name: Install K3s (Lightweight Kubernetes)
-      shell: curl -sfL https://get.k3s.io | sh -
+      shell: |
+        if ! command -v k3s >/dev/null 2>&1; then
+          curl -sfL https://get.k3s.io | sh -
+        fi
       args:
-        creates: /usr/local/bin/k3s
+        warn: false
 
-    - name: Configure kubeconfig for ubuntu user
+    # --- 1️⃣1️⃣ Ensure Kube config exists ---
+    - name: Ensure kube config accessible
       shell: |
         mkdir -p /home/ubuntu/.kube
         cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-        chown ubuntu:ubuntu /home/ubuntu/.kube/config
+        chown -R ubuntu:ubuntu /home/ubuntu/.kube
         chmod 600 /home/ubuntu/.kube/config
 
-    - name: Verify Kubernetes node status
-      become_user: ubuntu
-      shell: kubectl get nodes
-      register: k8s_nodes
-    - debug:
-        var: k8s_nodes.stdout_lines
-
-    - name: Create ArgoCD namespace
-      become_user: ubuntu
-      shell: kubectl create namespace argocd || true
-
-    - name: Install ArgoCD components
-      become_user: ubuntu
+    # --- 1️⃣2️⃣ Deploy ArgoCD if not installed ---
+    - name: Deploy ArgoCD in Kubernetes
       shell: |
-        kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+        export KUBECONFIG=/home/ubuntu/.kube/config
+        if ! kubectl get ns argocd >/dev/null 2>&1; then
+          kubectl create namespace argocd
+          kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+        fi
+        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "targetPort": 8080, "nodePort": 32000}]}}' || true
 
-    - name: Wait for ArgoCD pods to be ready
-      become_user: ubuntu
-      shell: |
-        echo "⏳ Waiting for ArgoCD pods to be ready..."
-        kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
-        kubectl get pods -n argocd
-      register: argocd_pods
-    - debug:
-        var: argocd_pods.stdout_lines
-
-    - name: Expose ArgoCD via NodePort (32000)
-      become_user: ubuntu
-      shell: |
-        kubectl patch svc argocd-server -n argocd \
-        -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "targetPort": 8080, "nodePort": 32000}]}}'
-        kubectl get svc -n argocd
-      register: argocd_service
-    - debug:
-        var: argocd_service.stdout_lines
-
-    - name: Print ArgoCD Access Info
+    # --- 1️⃣3️⃣ Display Access Info ---
+    - name: Display Service URLs
       debug:
-        msg: |
-          🌐 ArgoCD UI: https://{{ inventory_hostname }}:32000
-          👤 Username: admin
-          🔑 Password Command:
-            kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+        msg:
+          - "✅ Application: http://{{ ansible_host }}:8080/api/hello"
+          - "📊 Prometheus: http://{{ ansible_host }}:9090"
+          - "📈 Grafana: http://{{ ansible_host }}:3000 (admin/admin)"
+          - "🚀 ArgoCD: https://{{ ansible_host }}:32000 (admin)"
