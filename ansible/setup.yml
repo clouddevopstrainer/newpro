@@ -16,7 +16,7 @@
         - /opt/app
         - /opt/monitoring
 
-    # --- Wait for apt lock (important) ---
+    # --- Wait for apt lock ---
     - name: Wait for apt lock to be released
       shell: |
         while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
@@ -25,9 +25,9 @@
         done
       changed_when: false
 
-    # --- Fix apt and install Java (robust version) ---
+    # --- Fix apt and install Java ---
     - name: Fix apt sources and install Java 17
-      ansible.builtin.shell: |
+      shell: |
         echo "🔧 Ensuring apt repositories are configured properly..."
         sudo add-apt-repository universe -y || true
         sudo add-apt-repository multiverse -y || true
@@ -41,7 +41,7 @@
 
     # --- Firewall rules ---
     - name: Allow required ports (8080, 9090, 3000, 9100)
-      ansible.builtin.shell: |
+      shell: |
         sudo ufw allow 8080 || true
         sudo ufw allow 9090 || true
         sudo ufw allow 3000 || true
@@ -50,9 +50,9 @@
       args:
         executable: /bin/bash
 
-    # --- Stop old monitoring containers ---
-    - name: Stop old monitoring containers
-      ansible.builtin.shell: |
+    # --- Cleanup old containers ---
+    - name: Stop and remove old monitoring containers
+      shell: |
         containers=$(sudo docker ps -a --format '{{"{{.Names}}"}}' | grep -E 'monitoring-|prometheus|grafana|node_exporter' || true)
         if [ -n "$containers" ]; then
           echo "🧹 Removing old monitoring containers..."
@@ -62,14 +62,14 @@
         executable: /bin/bash
 
     - name: Remove old Docker networks and volumes
-      ansible.builtin.shell: |
+      shell: |
         sudo docker network prune -f || true
         sudo docker volume prune -f || true
         sudo docker system prune -f || true
       args:
         executable: /bin/bash
 
-    # --- Monitoring Config ---
+    # --- Prometheus Config ---
     - name: Copy Prometheus configuration
       copy:
         dest: /opt/monitoring/prometheus.yml
@@ -84,7 +84,8 @@
               static_configs:
                 - targets: ['node-exporter:9100']
 
-    - name: Copy Docker Compose for monitoring
+    # --- Docker Compose for Monitoring ---
+    - name: Copy Docker Compose file for monitoring stack
       copy:
         dest: /opt/monitoring/docker-compose.yml
         content: |
@@ -125,7 +126,7 @@
               restart: always
 
     - name: Start monitoring stack
-      ansible.builtin.shell: |
+      shell: |
         cd /opt/monitoring
         sudo docker compose up -d --remove-orphans
         echo "✅ Monitoring stack deployed successfully"
@@ -161,8 +162,8 @@
           [Install]
           WantedBy=multi-user.target
 
-    - name: Reload systemd and start the Spring Boot service
-      ansible.builtin.shell: |
+    - name: Reload systemd and start Spring Boot service
+      shell: |
         sudo systemctl daemon-reload
         sudo systemctl enable springboot-app
         sudo systemctl restart springboot-app
@@ -232,7 +233,7 @@
     - name: Expose ArgoCD via NodePort
       become_user: ubuntu
       shell: |
-        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "nodePort": 32000}]}}'
+        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "targetPort": 8080, "nodePort": 32000}]}}'
         kubectl get svc -n argocd
       register: argocd_service
     - debug:
