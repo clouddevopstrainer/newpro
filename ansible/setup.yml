@@ -6,7 +6,7 @@
 
   tasks:
 
-    # --- Setup base directory ---
+    # --- Setup base directories ---
     - name: Ensure /opt/app and /opt/monitoring directories exist
       file:
         path: "{{ item }}"
@@ -16,13 +16,15 @@
         - /opt/app
         - /opt/monitoring
 
-    # --- Install Java ---
-    - name: Install Java if not already installed
+    # --- Fix apt and install Java (robust version) ---
+    - name: Fix broken apt and install Java
       ansible.builtin.shell: |
-        if ! command -v java &> /dev/null; then
-          sudo apt update -y
-          sudo apt install -y openjdk-17-jdk
-        fi
+        echo "🔧 Fixing apt sources and updating packages..."
+        sudo rm -rf /var/lib/apt/lists/*
+        sudo apt-get clean
+        sudo apt-get update -y --fix-missing
+        sudo apt-get install -f -y
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk-headless
         java -version
       args:
         executable: /bin/bash
@@ -99,7 +101,7 @@
 
             node-exporter:
               image: prom/node-exporter
-              container_name: monitoring-node_exporter
+              container_name: monitoring-node-exporter
               ports:
                 - "9100:9100"
               volumes:
@@ -176,8 +178,9 @@
 - name: 🚀 Setup Kubernetes (K3s) and ArgoCD
   hosts: all
   become: yes
+
   tasks:
-  
+
     - name: Install K3s (Lightweight Kubernetes)
       shell: curl -sfL https://get.k3s.io | sh -
       args:
@@ -208,7 +211,10 @@
 
     - name: Wait for ArgoCD pods to be ready
       become_user: ubuntu
-      shell: kubectl get pods -n argocd
+      shell: |
+        echo "⏳ Waiting for ArgoCD pods to be ready..."
+        kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
+        kubectl get pods -n argocd
       register: argocd_pods
     - debug:
         var: argocd_pods.stdout_lines
@@ -216,5 +222,16 @@
     - name: Expose ArgoCD via NodePort
       become_user: ubuntu
       shell: |
-        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort"}}'
+        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "nodePort": 32000}]}}'
         kubectl get svc -n argocd
+      register: argocd_service
+    - debug:
+        var: argocd_service.stdout_lines
+
+    - name: Print ArgoCD Access Info
+      debug:
+        msg: |
+          🌐 ArgoCD is exposed at: https://<EC2_PUBLIC_IP>:32000
+          👤 Username: admin
+          🔑 Password:
+            kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
