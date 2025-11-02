@@ -16,6 +16,15 @@
         - /opt/app
         - /opt/monitoring
 
+    # --- Wait for apt lock (important) ---
+    - name: Wait for apt lock to be released
+      shell: |
+        while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "⏳ Waiting for apt lock to be released..."
+          sleep 5
+        done
+      changed_when: false
+
     # --- Fix apt and install Java (robust version) ---
     - name: Fix apt sources and install Java 17
       ansible.builtin.shell: |
@@ -234,5 +243,5 @@
         msg: |
           🌐 ArgoCD is exposed at: https://<EC2_PUBLIC_IP>:32000
           👤 Username: admin
-          🔑 Password:
+          🔑 Password Command:
             kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
