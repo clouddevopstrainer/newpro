@@ -5,8 +5,8 @@ provider "aws" {
 # ------------------------------
 # Security Group
 # ------------------------------
-resource "aws_security_group" "devnw27_sg" {
-  name        = "devnw27_sg"
+resource "aws_security_group" "devnw28_sg" {
+  name        = "devnw28_sg"
   description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter, ArgoCD"
 
   ingress {
@@ -73,18 +73,18 @@ resource "aws_security_group" "devnw27_sg" {
   }
 
   tags = {
-    Name = "devnw27_sg"
+    Name = "devnw28_sg"
   }
 }
 
 # ------------------------------
 # EC2 Instance
 # ------------------------------
-resource "aws_instance" "app27_servernew" {
+resource "aws_instance" "app28_servernew" {
   ami                    = var.ami_id
   instance_type          = var.instance_type
   key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.devnw27_sg.id]
+  vpc_security_group_ids = [aws_security_group.devnw28_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
@@ -124,7 +124,7 @@ resource "aws_instance" "app27_servernew" {
               EOF
 
   tags = {
-    Name = "app27_servernew"
+    Name = "app28_servernew"
   }
 }
 
@@ -132,5 +132,5 @@ resource "aws_instance" "app27_servernew" {
 # Output
 # ------------------------------
 output "instance_public_ip" {
-  value = aws_instance.app27_servernew.public_ip
+  value = aws_instance.app28_servernew.public_ip
 }
