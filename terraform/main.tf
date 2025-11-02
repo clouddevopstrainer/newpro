@@ -7,7 +7,7 @@ provider "aws" {
 # ------------------------------
 resource "aws_security_group" "devnw25_sg" {
   name        = "devnw25_sg"
-  description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter"
+  description = "Allow SSH, HTTP, NodePort, Prometheus, Grafana, Node Exporter, ArgoCD"
 
   ingress {
     description = "SSH"
@@ -53,6 +53,14 @@ resource "aws_security_group" "devnw25_sg" {
     description = "Node Exporter"
     from_port   = 9100
     to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "ArgoCD"
+    from_port   = 32000
+    to_port     = 32000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
