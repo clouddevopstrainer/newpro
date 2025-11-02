@@ -25,17 +25,25 @@
         done
       changed_when: false
 
-    # --- Fix apt and install Java ---
-    - name: Fix apt sources and install Java 17
+    # --- Install Java 17 + Docker ---
+    - name: Fix apt sources and install Java 17 + Docker
       shell: |
-        echo "🔧 Ensuring apt repositories are configured properly..."
-        sudo add-apt-repository universe -y || true
-        sudo add-apt-repository multiverse -y || true
-        sudo add-apt-repository restricted -y || true
+        echo "🔧 Fixing apt and installing dependencies..."
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
         sudo apt-get update -y --fix-missing
         sudo apt-get install -f -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk docker.io curl
+        sudo apt-get install -y openjdk-17-jdk curl ufw
+
+        # Remove conflicting container runtimes
+        sudo apt-get remove -y containerd containerd.io || true
+
+        # Install Docker using official convenience script
+        curl -fsSL https://get.docker.com | sudo bash
+        sudo usermod -aG docker ubuntu
+
         java -version
+        docker --version
       args:
         executable: /bin/bash
 
@@ -150,11 +158,8 @@
           [Service]
           User=ubuntu
           ExecStart=/usr/bin/env java -jar /opt/app/springboot-app.jar
-          SuccessExitStatus=143
           Restart=always
           RestartSec=10
-          StandardOutput=journal
-          StandardError=journal
           Environment=SERVER_PORT=8080
           Environment=SERVER_ADDRESS=0.0.0.0
 
@@ -229,10 +234,11 @@
     - debug:
         var: argocd_pods.stdout_lines
 
-    - name: Expose ArgoCD via NodePort
+    - name: Expose ArgoCD via NodePort (32000)
       become_user: ubuntu
       shell: |
-        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "targetPort": 8080, "nodePort": 32000}]}}'
+        kubectl patch svc argocd-server -n argocd \
+        -p '{"spec": {"type": "NodePort", "ports": [{"port": 443, "targetPort": 8080, "nodePort": 32000}]}}'
         kubectl get svc -n argocd
       register: argocd_service
     - debug:
@@ -241,7 +247,7 @@
     - name: Print ArgoCD Access Info
       debug:
         msg: |
-          🌐 ArgoCD is exposed at: https://{{ inventory_hostname }}:32000
+          🌐 ArgoCD UI: https://{{ inventory_hostname }}:32000
           👤 Username: admin
           🔑 Password Command:
             kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
