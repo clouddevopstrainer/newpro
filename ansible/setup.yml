@@ -1,4 +1,5 @@
 ---
+# === Play 1: Deploy Monitoring + Application Stack ===
 - name: 🚀 Deploy Monitoring + Application Stack
   hosts: all
   become: yes
@@ -169,3 +170,51 @@
     - name: Print success message
       debug:
         msg: "✅ Application & Monitoring Stack deployed successfully and accessible externally!"
+
+
+# === Play 2: Setup Kubernetes (K3s) + ArgoCD ===
+- name: 🚀 Setup Kubernetes (K3s) and ArgoCD
+  hosts: all
+  become: yes
+  tasks:
+  
+    - name: Install K3s (Lightweight Kubernetes)
+      shell: curl -sfL https://get.k3s.io | sh -
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Configure kubeconfig for ubuntu user
+      shell: |
+        mkdir -p /home/ubuntu/.kube
+        cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+        chown ubuntu:ubuntu /home/ubuntu/.kube/config
+        chmod 600 /home/ubuntu/.kube/config
+
+    - name: Verify Kubernetes node status
+      become_user: ubuntu
+      shell: kubectl get nodes
+      register: k8s_nodes
+    - debug:
+        var: k8s_nodes.stdout_lines
+
+    - name: Create ArgoCD namespace
+      become_user: ubuntu
+      shell: kubectl create namespace argocd || true
+
+    - name: Install ArgoCD components
+      become_user: ubuntu
+      shell: |
+        kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+    - name: Wait for ArgoCD pods to be ready
+      become_user: ubuntu
+      shell: kubectl get pods -n argocd
+      register: argocd_pods
+    - debug:
+        var: argocd_pods.stdout_lines
+
+    - name: Expose ArgoCD via NodePort
+      become_user: ubuntu
+      shell: |
+        kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort"}}'
+        kubectl get svc -n argocd
