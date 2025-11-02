@@ -141,9 +141,9 @@
         executable: /bin/bash
 
     # --- Deploy Spring Boot app ---
-    - name: Copy application JAR
+    - name: Copy application JAR dynamically
       copy:
-        src: "{{ WORKSPACE }}/target/springboot-app-1.0.0.jar"
+        src: "{{ lookup('pipe', 'ls ' + WORKSPACE + '/target/*.jar | head -n 1') }}"
         dest: /opt/app/springboot-app.jar
         mode: '0755'
 
