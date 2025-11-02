@@ -34,18 +34,17 @@
         sudo add-apt-repository restricted -y || true
         sudo apt-get update -y --fix-missing
         sudo apt-get install -f -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk docker.io curl
         java -version
       args:
         executable: /bin/bash
 
     # --- Firewall rules ---
-    - name: Allow required ports (8080, 9090, 3000, 9100)
+    - name: Allow required ports (8080, 9090, 3000, 9100, 32000)
       shell: |
-        sudo ufw allow 8080 || true
-        sudo ufw allow 9090 || true
-        sudo ufw allow 3000 || true
-        sudo ufw allow 9100 || true
+        for port in 8080 9090 3000 9100 32000; do
+          sudo ufw allow $port || true
+        done
         sudo ufw reload || true
       args:
         executable: /bin/bash
@@ -136,7 +135,7 @@
     # --- Deploy Spring Boot app ---
     - name: Copy application JAR
       copy:
-        src: /var/lib/jenkins/workspace/Pipelinejob/target/springboot-app-1.0.0.jar
+        src: "{{ WORKSPACE }}/target/springboot-app-1.0.0.jar"
         dest: /opt/app/springboot-app.jar
         mode: '0755'
 
@@ -242,7 +241,7 @@
     - name: Print ArgoCD Access Info
       debug:
         msg: |
-          🌐 ArgoCD is exposed at: https://<EC2_PUBLIC_IP>:32000
+          🌐 ArgoCD is exposed at: https://{{ inventory_hostname }}:32000
           👤 Username: admin
           🔑 Password Command:
             kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
